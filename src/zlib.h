@@ -68,11 +68,6 @@ class ZipLib : ObjectWrap {
         callback_.Dispose();
       }
     }
-
-
-    static Handle<Object> GetBuffer(Local<Value> buffer) {
-	  return buffer->ToObject();
-    }
 	 
    public:
     static Request* Write(Self *self, Local<Value> inputBuffer,
