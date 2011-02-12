@@ -1,3 +1,25 @@
+/*
+ * Copyright 2010, Ivan Egorov (egorich.3.04@gmail.com).
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+ * IN THE SOFTWARE.
+ */
+
 #ifndef NODE_COMPRESS_ZLIB_H__
 #define NODE_COMPRESS_ZLIB_H__
 
@@ -12,6 +34,24 @@
 #include <assert.h>
 
 #include "utils.h"
+
+
+#ifdef DEBUG
+
+#include <stdio.h>
+
+#define DEBUG_P(fmt, args...) \
+  do { \
+    fprintf(stderr, "%s: %d %s " fmt "\n", \
+        __FILE__, __LINE__, __PRETTY_FUNCTION__, ##args); \
+  } while (0);
+
+
+#else
+
+#define DEBUG_P(fmt, args...)
+
+#endif
 
 using namespace v8;
 using namespace node;
@@ -45,8 +85,8 @@ class ZipLib : ObjectWrap {
     Request(ZipLib *self, Local<Value> inputBuffer, Local<Function> callback)
       : kind_(RWrite), self_(self),
       buffer_(Persistent<Value>::New(inputBuffer)),
-      data_(Buffer::Data(GetBuffer(inputBuffer)),
-      length_(Buffer::Length(GetBuffer(inputBuffer))),
+      data_(Buffer::Data(inputBuffer->ToObject())),
+      length_(Buffer::Length(inputBuffer->ToObject())),
       callback_(Persistent<Function>::New(callback))
     {}
     
@@ -68,18 +108,21 @@ class ZipLib : ObjectWrap {
         callback_.Dispose();
       }
     }
-	 
+
    public:
     static Request* Write(Self *self, Local<Value> inputBuffer,
         Local<Function> callback) {
+      DEBUG_P("WRITE");
       return new(std::nothrow) Request(self, inputBuffer, callback);
     }
 
     static Request* Close(Self *self, Local<Function> callback) {
+      DEBUG_P("CLOSE");
       return new(std::nothrow) Request(self, callback);
     }
 
     static Request* Destroy(Self *self) {
+      DEBUG_P("DESTROY");
       return new(std::nothrow) Request(self);
     }
 
@@ -256,6 +299,7 @@ class ZipLib : ObjectWrap {
       processorActive_ = true;
     }
     pthread_mutex_unlock(&requestsMutex_);
+    DEBUG_P("PUSH: startProcessing = %d", startProcessing);
     
     if (!pushed) {
       return ThrowGentleOom();
@@ -266,8 +310,13 @@ class ZipLib : ObjectWrap {
           Self::DoHandleCallbacks, request);
     }
 
+    DEBUG_P("ev_ref()");
     ev_ref(EV_DEFAULT_UC);
+    DEBUG_P(" ev_ref() done");
+
+    DEBUG_P("Ref()");
     Ref();
+    DEBUG_P(" Ref() done");
     return Undefined();
   }
 
@@ -285,6 +334,7 @@ class ZipLib : ObjectWrap {
     volatile bool flag;
     do {
       while (ReentrantPop(requestsQueue_, requestsMutex_, request)) {
+        DEBUG_P("POP: kind = %d", request->kind());
         switch (request->kind()) {
           case Request::RWrite:
             request->setStatus(
@@ -308,12 +358,16 @@ class ZipLib : ObjectWrap {
         ev_async_send(EV_DEFAULT_UC_ &callbackNotify_);
 
         // Unref counter triggered by request.
+        DEBUG_P("ev_unref() ...");
         ev_unref(EV_DEFAULT_UC);
+        DEBUG_P("  ev_unref() done");
         if (!success) {
           // Normally we should unref self() after callback called in
           // DoHandleCallbacks(), but as we failed to push request for 
           // callback for this request, we should unref here.
+          DEBUG_P("request->self()->Unref()");
           request->self()->Unref();
+          DEBUG_P("  request->self()->Unref() done");
         }
       }
 
@@ -330,11 +384,15 @@ class ZipLib : ObjectWrap {
   static int DoHandleCallbacks(eio_req *req) {
     Request *request;
     while (ReentrantPop(callbackQueue_, callbackMutex_, request)) {
+      DEBUG_P("CALLBACK");
+
       Self *self = request->self();
       self->DoCallback(request->callback(),
           request->status(), request->output());
 
+      DEBUG_P("self->Unref()");
       self->Unref();
+      DEBUG_P(" self->Unref() done");
       delete request;
     }
     return 0;
@@ -500,4 +558,3 @@ template <class T>
 Queue<typename ZipLib<T>::Request*> ZipLib<T>::callbackQueue_;
 
 #endif
-
